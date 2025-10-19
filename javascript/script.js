@@ -346,24 +346,24 @@ function handleKeyDown(e) {
         const newBlock = document.createElement('div');
         newBlock.className = 'editor-block editing';
         
-        // 리스트 자동 입력 로직
+        // 리스트 자동 입력 로직 (수정됨)
         const rawText = beforeText;
         let newBlockContent = afterText;
+        let isListItem = false;
         
-        const listMatch = rawText.match(/^([*+\-])\s+(.*)$/);
-        if (listMatch) {
-            const listSymbol = listMatch[1];
-            if (listSymbol === '+') {
-                const numMatch = rawText.match(/^.*?(\d+)\.\s+/);
-                if (numMatch) {
-                    const nextNum = parseInt(numMatch[1]) + 1;
-                    newBlockContent = `${nextNum}. ${afterText}`;
-                } else {
-                    newBlockContent = `1. ${afterText}`;
-                }
-            } else {
-                newBlockContent = `${listSymbol} ${afterText}`;
-            }
+        // - 또는 * 기호 리스트
+        const dotListMatch = rawText.match(/^([*\-])\s+(.*)$/);
+        if (dotListMatch) {
+            const listSymbol = dotListMatch[1];
+            newBlockContent = `${listSymbol} ${afterText}`;
+            isListItem = true;
+        }
+        
+        // + 숫자 리스트
+        const numListMatch = rawText.match(/^(\+)\s+(.*)$/);
+        if (numListMatch) {
+            newBlockContent = `+ ${afterText}`;
+            isListItem = true;
         }
         
         newBlock.setAttribute('data-raw', newBlockContent);
@@ -374,7 +374,7 @@ function handleKeyDown(e) {
 
         currentBlock.parentNode.insertBefore(newBlock, currentBlock.nextSibling);
         
-        // 이전 블록 렌더링 (추가!)
+        // 이전 블록 렌더링
         currentBlock.classList.remove('editing');
         currentEditingBlock = newBlock;
         renderDocument();
@@ -387,7 +387,13 @@ function handleKeyDown(e) {
         const newRange = document.createRange();
         
         if (newBlock.firstChild && newBlock.firstChild.nodeType === Node.TEXT_NODE) {
-            newRange.setStart(newBlock.firstChild, 0);
+            // 리스트 항목인 경우 기호 + 공백 뒤로 커서 이동
+            if (isListItem) {
+                const prefixLength = newBlockContent.indexOf(' ') + 1; // "- " or "+ " 뒤
+                newRange.setStart(newBlock.firstChild, prefixLength);
+            } else {
+                newRange.setStart(newBlock.firstChild, 0);
+            }
         } else {
             newRange.setStart(newBlock, 0);
         }
@@ -400,19 +406,62 @@ function handleKeyDown(e) {
 
         // 1. 텍스트가 선택된 경우 (Selection이 있는 경우)
         if (!range.collapsed) {
-            // 선택된 텍스트를 지우도록 기본 동작 허용
             e.preventDefault();
             
-            // 선택 범위 앞뒤 텍스트
-            const tempBefore = range.cloneRange();
-            tempBefore.setStart(currentBlock, 0);
-            tempBefore.setEnd(range.startContainer, range.startOffset);
-            const beforeText = tempBefore.toString();
+            // 선택 범위의 시작과 끝을 정확히 파악
+            let startNode = range.startContainer;
+            let endNode = range.endContainer;
+            let startOffset = range.startOffset;
+            let endOffset = range.endOffset;
             
-            const tempAfter = range.cloneRange();
-            tempAfter.setStart(range.endContainer, range.endOffset);
-            tempAfter.setEnd(currentBlock, currentBlock.childNodes.length);
-            const afterText = tempAfter.toString();
+            // 텍스트 노드가 아닌 경우 처리
+            if (startNode.nodeType !== Node.TEXT_NODE) {
+                startNode = currentBlock.firstChild || currentBlock;
+                startOffset = 0;
+            }
+            if (endNode.nodeType !== Node.TEXT_NODE) {
+                endNode = currentBlock.lastChild || currentBlock;
+                if (endNode.nodeType === Node.TEXT_NODE) {
+                    endOffset = endNode.length;
+                } else {
+                    endOffset = currentBlock.textContent.length;
+                }
+            }
+            
+            // 전체 텍스트에서 앞뒤 추출
+            const fullText = currentBlock.textContent || '';
+            let beforeText = '';
+            let afterText = '';
+            
+            // contentEditable 환경에서 정확한 위치 계산
+            const walker = document.createTreeWalker(
+                currentBlock,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+            
+            let currentPos = 0;
+            let startPos = -1;
+            let endPos = -1;
+            let node;
+            
+            while (node = walker.nextNode()) {
+                const nodeLength = node.length;
+                if (node === startNode) {
+                    startPos = currentPos + startOffset;
+                }
+                if (node === endNode) {
+                    endPos = currentPos + endOffset;
+                }
+                currentPos += nodeLength;
+            }
+            
+            if (startPos === -1) startPos = 0;
+            if (endPos === -1) endPos = fullText.length;
+            
+            beforeText = fullText.substring(0, startPos);
+            afterText = fullText.substring(endPos);
             
             const mergedText = beforeText + afterText;
             currentBlock.textContent = mergedText;
@@ -429,7 +478,8 @@ function handleKeyDown(e) {
                 const newRange = document.createRange();
                 
                 if (currentBlock.firstChild && currentBlock.firstChild.nodeType === Node.TEXT_NODE) {
-                    newRange.setStart(currentBlock.firstChild, beforeText.length);
+                    const cursorPos = Math.min(beforeText.length, currentBlock.firstChild.length);
+                    newRange.setStart(currentBlock.firstChild, cursorPos);
                 } else {
                     newRange.setStart(currentBlock, 0);
                 }
@@ -531,7 +581,7 @@ function handleKeyDown(e) {
     }
 }
 
-// 붙여넣기 로직 (변경 없음)
+// 붙여넣기 로직
 function handlePaste(e) {
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
@@ -546,19 +596,107 @@ function handlePaste(e) {
 
     const range = selection.getRangeAt(0);
 
-    // 커서 이전/이후 텍스트 분리 (paste에서도 동일한 안전 로직 사용)
-    const tempRangeBefore = range.cloneRange();
-    tempRangeBefore.setStart(currentBlock, 0);
-    tempRangeBefore.setEnd(range.startContainer, range.startOffset);
-    const beforeCursor = tempRangeBefore.toString();
-    
-    const tempRangeAfter = range.cloneRange();
-    tempRangeAfter.setStart(range.endContainer, range.endOffset);
-    tempRangeAfter.setEnd(currentBlock, currentBlock.childNodes.length);
-    const afterCursor = tempRangeAfter.toString();
+    let beforeCursor = '';
+    let afterCursor = '';
+
+    // 전체 텍스트 가져오기
+    const fullText = currentBlock.textContent || '';
+
+    // 선택 영역이 있는 경우: 선택된 텍스트를 삭제하고 붙여넣기
+    if (!range.collapsed) {
+        // TreeWalker로 정확한 위치 찾기
+        const walker = document.createTreeWalker(
+            currentBlock,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+        
+        let currentPos = 0;
+        let startPos = -1;
+        let endPos = -1;
+        let node;
+        
+        const startNode = range.startContainer;
+        const endNode = range.endContainer;
+        const startOffset = range.startOffset;
+        const endOffset = range.endOffset;
+        
+        // 각 텍스트 노드를 순회하며 위치 계산
+        while (node = walker.nextNode()) {
+            const nodeLength = node.length;
+            
+            if (node === startNode) {
+                startPos = currentPos + startOffset;
+            }
+            if (node === endNode) {
+                endPos = currentPos + endOffset;
+            }
+            
+            currentPos += nodeLength;
+        }
+        
+        // 위치를 찾지 못한 경우 대비
+        if (startPos === -1) {
+            // startContainer가 element인 경우
+            if (startNode === currentBlock) {
+                startPos = startOffset === 0 ? 0 : fullText.length;
+            } else {
+                startPos = 0;
+            }
+        }
+        if (endPos === -1) {
+            // endContainer가 element인 경우
+            if (endNode === currentBlock) {
+                endPos = endOffset === 0 ? 0 : fullText.length;
+            } else {
+                endPos = fullText.length;
+            }
+        }
+        
+        // 선택 범위 앞뒤 텍스트 추출
+        beforeCursor = fullText.substring(0, startPos);
+        afterCursor = fullText.substring(endPos);
+        
+    } else {
+        // 선택 영역이 없는 경우: 커서 위치에 삽입
+        const walker = document.createTreeWalker(
+            currentBlock,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+        
+        let currentPos = 0;
+        let cursorPos = -1;
+        let node;
+        
+        const cursorNode = range.startContainer;
+        const cursorOffset = range.startOffset;
+        
+        while (node = walker.nextNode()) {
+            if (node === cursorNode) {
+                cursorPos = currentPos + cursorOffset;
+                break;
+            }
+            currentPos += node.length;
+        }
+        
+        if (cursorPos === -1) {
+            if (cursorNode === currentBlock) {
+                cursorPos = cursorOffset === 0 ? 0 : fullText.length;
+            } else {
+                cursorPos = 0;
+            }
+        }
+        
+        beforeCursor = fullText.substring(0, cursorPos);
+        afterCursor = fullText.substring(cursorPos);
+    }
 
     // 현재 블록에 첫 줄 붙여넣기
     currentBlock.textContent = beforeCursor + lines[0];
+    currentBlock.setAttribute('data-raw', beforeCursor + lines[0]);
     
     let lastBlock = currentBlock;
 
@@ -566,21 +704,19 @@ function handlePaste(e) {
     for (let i = 1; i < lines.length; i++) {
         const newBlock = document.createElement('div');
         newBlock.className = 'editor-block';
-        newBlock.setAttribute('data-raw', lines[i]);  // <- 이 줄 추가
+        newBlock.setAttribute('data-raw', lines[i]);
         newBlock.textContent = lines[i];
-        currentBlock.parentNode.insertBefore(newBlock, lastBlock.nextSibling);
+        lastBlock.parentNode.insertBefore(newBlock, lastBlock.nextSibling);
         lastBlock = newBlock;
     }
     
     // 마지막 블록에 커서 이후 텍스트 붙여넣기
     lastBlock.textContent += afterCursor;
-
-    currentBlock.setAttribute('data-raw', currentBlock.textContent || '');
-    lastBlock.setAttribute('data-raw', lastBlock.textContent || '');
+    lastBlock.setAttribute('data-raw', lastBlock.textContent);
 
     renderDocument(); 
 
-    // 커서 위치 재설정
+    // 커서 위치 재설정 (붙여넣은 텍스트 끝)
     const finalOffset = lastBlock.textContent.length - afterCursor.length;
     switchToEditMode(lastBlock, finalOffset); 
 }
@@ -809,8 +945,7 @@ function renderDocument() {
             return;
         }
                 
-        // --- 리스트 (오류 2 수정: *와 리스트 이어가기) ---
-        // - 점 리스트, + 숫자 리스트
+        // --- 리스트 ---
         const listMatch = trimmed.match(/^([*+-])\s+(.+)$/);
         if (listMatch) {
             const symbol = listMatch[1];
@@ -840,31 +975,23 @@ function renderDocument() {
 
             if (listContainer) {
                 const listItem = document.createElement('li');
-        listItem.className = `list-item ${listClass}`;
-        
-        // 숫자 리스트인 경우 번호 제거 (자동 스타일링)
-        if (newListType === 'ol') {
-            const numMatch = content.match(/^(\d+\.)\s+(.*)$/);
-            if (numMatch) {
-                content = numMatch[2]; // 번호 제거
+                listItem.className = `list-item ${listClass}`;
+                
+                // 숫자 리스트는 CSS로 자동 번호 매김 (번호 제거 불필요)
+                listItem.innerHTML = parseInlineMarkdown(content);
+                listContainer.appendChild(listItem);
             }
+            
+            inQuoteBlock = false;
+            return;
         }
-        
-        listItem.innerHTML = parseInlineMarkdown(content);
-        listContainer.appendChild(listItem);
-    }
-    
-    inQuoteBlock = false;
-    return;
-}
 
-// 리스트 종료 시 리셋
-if (inList) {
-    inList = false;
-    listType = null;
-    listContainer = null;
-}
-
+        // 리스트 종료 시 리셋
+        if (inList) {
+            inList = false;
+            listType = null;
+            listContainer = null;
+        }
 
         // --- 일반 블록 ---
         if (inList) {
