@@ -188,21 +188,46 @@ body {
 }
 
 h1.rendered-heading { 
-    font-size: 2em; 
-    border-bottom: 1px solid var(--border-color); 
-    padding-bottom: 8px; 
+    font-size: 2.2em; 
+    border-bottom: 2px solid var(--border-color); 
+    padding-bottom: 10px; 
+    margin-bottom: 20px;
 }
 
 h2.rendered-heading { 
-    font-size: 1.5em; 
-    border-bottom: 1px solid var(--border-color); 
-    padding-bottom: 6px; 
+    font-size: 1.8em; 
+    border-bottom: 1.5px solid var(--border-color); 
+    padding-bottom: 8px;
+    margin-bottom: 16px;
 }
 
-h3.rendered-heading { font-size: 1.25em; }
-h4.rendered-heading { font-size: 1em; }
-h5.rendered-heading { font-size: 0.875em; }
-h6.rendered-heading { font-size: 0.85em; color: var(--text-secondary); }
+h3.rendered-heading { 
+    font-size: 1.4em;
+    margin-bottom: 14px;
+}
+
+h4.rendered-heading { 
+    font-size: 1.1em;
+    margin-bottom: 12px;
+}
+
+h5.rendered-heading { 
+    font-size: 0.95em;
+    margin-bottom: 10px;
+}
+
+h6.rendered-heading { 
+    font-size: 0.85em; 
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
+/* 추가: 개요 번호 스타일 */
+.heading-number {
+    color: var(--accent-color);
+    font-weight: bold;
+    margin-right: 5px;
+}
 
 strong {
     font-weight: 700;

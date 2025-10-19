@@ -189,12 +189,10 @@ function handleKeyDown(e) {
         e.preventDefault();
         if (!currentBlock) return;
 
-        // 커서 위치 계산
         let cursorPos = 0;
         if (range.startContainer.nodeType === Node.TEXT_NODE) {
             cursorPos = range.startOffset;
         } else {
-            // 엘리먼트 노드인 경우, startOffset은 자식 노드 인덱스
             if (range.startOffset === currentBlock.childNodes.length) {
                 cursorPos = currentBlock.textContent.length;
             } else {
@@ -202,12 +200,10 @@ function handleKeyDown(e) {
             }
         }
 
-        // 블록의 전체 텍스트
         const fullText = currentBlock.textContent;
         const beforeText = fullText.substring(0, cursorPos);
         const afterText = fullText.substring(cursorPos);
 
-        // 현재 블록 업데이트
         currentBlock.textContent = beforeText;
         currentBlock.setAttribute('data-raw', beforeText);
         if (beforeText === '') {
@@ -217,63 +213,80 @@ function handleKeyDown(e) {
         // 새 블록 생성
         const newBlock = document.createElement('div');
         newBlock.className = 'editor-block editing';
-        newBlock.setAttribute('data-raw', afterText);
-        newBlock.textContent = afterText;
-        if (afterText === '') {
+        
+        // 리스트 자동 입력 로직 추가 (수정 1)
+        const rawText = beforeText;
+        let newBlockContent = afterText;
+        
+        // 현재 줄이 리스트 형식인지 확인
+        const listMatch = rawText.match(/^([*+\-])\s+(.*)$/);
+        if (listMatch) {
+            const listSymbol = listMatch[1];
+            if (listSymbol === '+') {
+                // 숫자 리스트: 번호 추출 후 1 증가
+                const numMatch = rawText.match(/^.*?(\d+)\.\s+/);
+                if (numMatch) {
+                    const nextNum = parseInt(numMatch[1]) + 1;
+                    newBlockContent = `${nextNum}. ${afterText}`;
+                } else {
+                    newBlockContent = `1. ${afterText}`;
+                }
+            } else {
+                // 점 리스트
+                newBlockContent = `${listSymbol} ${afterText}`;
+            }
+        }
+        
+        newBlock.setAttribute('data-raw', newBlockContent);
+        newBlock.textContent = newBlockContent;
+        if (newBlockContent === '') {
             newBlock.innerHTML = '<br>';
         }
 
-        // DOM에 삽입
         currentBlock.parentNode.insertBefore(newBlock, currentBlock.nextSibling);
         currentEditingBlock = newBlock;
-
-        // 커서를 새 블록 맨 앞으로 설정
-        setTimeout(() => {
-            newBlock.focus();
-            const sel = window.getSelection();
-            const newRange = document.createRange();
-            
-            const firstChild = newBlock.firstChild;
-            if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
-                newRange.setStart(firstChild, 0);
-            } else {
-                newRange.setStart(newBlock, 0);
-            }
-            
-            newRange.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(newRange);
-        }, 0);
 
     } else if (e.key === 'Backspace') {
         if (!currentBlock) return;
 
-        // 첫 번째 블록이면서 비어있거나 커서가 맨 앞인 경우
+        // 첫 번째 블록이고 비어있으면 아무것도 하지 않음
         if (!currentBlock.previousSibling && range.startOffset === 0) {
             e.preventDefault();
             return;
         }
 
-        // 현재 블록이 비어있고 이전 블록이 있는 경우, 이전 블록과 병합
+        // 현재 커서가 블록 맨 앞이고 이전 블록이 존재
         if (range.startOffset === 0 && currentBlock.previousSibling) {
             e.preventDefault();
 
-            const prevBlock = currentBlock.previousSibling;
-            const prevText = prevBlock.getAttribute('data-raw') || prevBlock.textContent || '';
-            const currentText = currentBlock.getAttribute('data-raw') || currentBlock.textContent || '';
+            // 이전 블록 찾기 (display: none인 블록 건너뛰기)
+            let prevBlock = currentBlock.previousSibling;
+            while (prevBlock && prevBlock.style.display === 'none') {
+                prevBlock = prevBlock.previousSibling;
+            }
 
-            // 이전 블록에 현재 텍스트 추가
+            if (!prevBlock) return;
+
+            // 안전한 텍스트 추출
+            const prevRaw = prevBlock.getAttribute('data-raw');
+            const currentRaw = currentBlock.getAttribute('data-raw');
+            
+            const prevText = prevRaw !== null ? prevRaw : prevBlock.textContent || '';
+            const currentText = currentRaw !== null ? currentRaw : currentBlock.textContent || '';
+
+            // 텍스트 병합
             const mergedText = prevText + currentText;
             prevBlock.setAttribute('data-raw', mergedText);
             prevBlock.textContent = mergedText;
             prevBlock.classList.add('editing');
+            prevBlock.classList.remove('rendered', 'heading-block', 'code-block-marker', 'code-block-content');
             prevBlock.style.display = '';
 
             // 현재 블록 제거
             currentBlock.remove();
             currentEditingBlock = prevBlock;
 
-            // 커서를 병합 지점에 설정
+            // 커서 위치 설정
             setTimeout(() => {
                 prevBlock.focus();
                 const sel = window.getSelection();
@@ -281,7 +294,9 @@ function handleKeyDown(e) {
                 
                 const firstChild = prevBlock.firstChild;
                 if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
-                    newRange.setStart(firstChild, prevText.length);
+                    newRange.setStart(firstChild, Math.min(prevText.length, firstChild.length));
+                } else if (prevBlock.childNodes.length > 0) {
+                    newRange.setStart(prevBlock, 0);
                 } else {
                     newRange.setStart(prevBlock, 0);
                 }
@@ -289,11 +304,10 @@ function handleKeyDown(e) {
                 newRange.collapse(true);
                 sel.removeAllRanges();
                 sel.addRange(newRange);
-            }, 0);
+            }, 10);
 
             renderDocument();
         }
-
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         setTimeout(() => {
             const newBlock = getContainingBlock(window.getSelection().anchorNode);
@@ -464,7 +478,12 @@ function renderDocument() {
                 if (index === codeStartIndex + 1) {
                     block.classList.add('code-block-start');
                 }
-                block.textContent = rawText; // 원본 텍스트 유지
+                
+                // 코드 블록 내용을 안전하게 표시
+                block.innerHTML = '';
+                const codeContent = document.createTextNode(rawText);
+                block.appendChild(codeContent);
+                
                 return;
             }
         }
@@ -511,7 +530,7 @@ function renderDocument() {
         // --- 인용문 블록 시작 ('"""') ---
         if (trimmed === '"""' && !inQuoteBlock) {
             inQuoteBlock = true;
-            block.innerHTML = `<div class="blockquote-marker">"""</div>`;
+            block.style.display = 'none';  // 시작 마커 숨기기
             block.classList.add('rendered');
             return;
         }
@@ -534,39 +553,34 @@ function renderDocument() {
             let levelString = '';
             let displayContent = '';
             
-            // 숫자 개요 문법 확인: 텍스트가 "1. ", "1.1. " 등으로 시작하는지, 또는 "1 " 등으로 시작하는지 확인
-            const numMatch = fullContent.match(/^(\d+\.(?:\d+\.)*|\d+)\s+(.*)$/); 
+            const numMatch = fullContent.match(/^(\d+\.(?:\d+\.)*|\d+)\s+(.*)$/);
 
             if (numMatch) {
-                // 숫자 있는 개요 문법 (예: #1, ## 1.1)
                 const explicitNumber = numMatch[1];
                 displayContent = numMatch[2];
-                
-                // levelString 설정: 1.1.1 -> 1.1.1. (또는 1 -> 1.)
                 levelString = explicitNumber.endsWith('.') ? explicitNumber : explicitNumber + '.';
-
+                
+                // 번호 + 제목 모두 표시
+                block.innerHTML = `<h${level} class="rendered-heading" data-level-string="${escapeHtml(levelString)}"><span class="heading-number">${escapeHtml(levelString)}</span> ${parseInlineMarkdown(displayContent)}</h${level}>`;
             } else {
-                // 숫자 없는 개요 문법 (예: # 개요 1단계)
                 levelString = '';
                 displayContent = fullContent;
+                block.innerHTML = `<h${level} class="rendered-heading" data-level-string="">${parseInlineMarkdown(displayContent)}</h${level}>`;
             }
-
-            // data-level-string에 번호를 저장하여 TOC에서 사용 (오류 3 수정 대비)
-            block.innerHTML = `<h${level} class="rendered-heading" data-level-string="${escapeHtml(levelString)}">${escapeHtml(levelString)} ${parseInlineMarkdown(displayContent)}</h${level}>`;
+            
             block.classList.add('rendered', 'heading-block');
             inList = false;
             inQuoteBlock = false;
             return;
         }
-        
+                
         // --- 리스트 (오류 2 수정: *와 리스트 이어가기) ---
         // - 점 리스트, + 숫자 리스트
-        const listMatch = trimmed.match(/^([*+-])\s+(.+)$/); // *, -, + 모두 처리
+        const listMatch = trimmed.match(/^([*+-])\s+(.+)$/);
         if (listMatch) {
             const symbol = listMatch[1];
-            // * 또는 -는 점 리스트, +는 숫자 리스트
             const newListType = (symbol === '+') ? 'ol' : 'ul';
-            const content = listMatch[2];
+            let content = listMatch[2];
             const listClass = newListType === 'ol' ? 'num' : 'dot';
 
             let listContainerFound = false;
@@ -576,7 +590,6 @@ function renderDocument() {
             }
 
             if (!listContainerFound) {
-                // 새 리스트 시작
                 inList = true;
                 listType = newListType;
                 listContainer = document.createElement(newListType);
@@ -586,21 +599,36 @@ function renderDocument() {
                 block.classList.add('rendered');
                 block.style.display = '';
             } else {
-                // 기존 리스트 계속 (현재 블록 숨김)
                 block.innerHTML = '';
                 block.style.display = 'none'; 
             }
 
             if (listContainer) {
                 const listItem = document.createElement('li');
-                listItem.className = `list-item ${listClass}`;
-                listItem.innerHTML = parseInlineMarkdown(content);
-                listContainer.appendChild(listItem);
+        listItem.className = `list-item ${listClass}`;
+        
+        // 숫자 리스트인 경우 번호 제거 (자동 스타일링)
+        if (newListType === 'ol') {
+            const numMatch = content.match(/^(\d+\.)\s+(.*)$/);
+            if (numMatch) {
+                content = numMatch[2]; // 번호 제거
             }
-            
-            inQuoteBlock = false;
-            return;
         }
+        
+        listItem.innerHTML = parseInlineMarkdown(content);
+        listContainer.appendChild(listItem);
+    }
+    
+    inQuoteBlock = false;
+    return;
+}
+
+// 리스트 종료 시 리셋
+if (inList) {
+    inList = false;
+    listType = null;
+    listContainer = null;
+}
 
 
         // --- 일반 블록 ---
