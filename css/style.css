@@ -150,13 +150,18 @@ body {
     border-radius: 4px;
 }
 
-.editor-block.code-block-content, .editor-block.rendered-latex {
+.editor-block.code-block-content {
     font-family: 'Courier New', monospace;
     background-color: var(--code-bg);
-    padding: 3px 10px; 
-    margin: 0;
-    border-radius: 0; 
-    white-space: pre-wrap; 
+    padding: 3px 10px;
+    white-space: pre-wrap;
+}
+
+.editor-block.rendered-latex {
+    font-family: inherit;
+    background-color: var(--code-bg);
+    padding: 15px 10px;
+    text-align: center;
 }
 
 .editor-block.code-block-start {
@@ -173,14 +178,6 @@ body {
     color: var(--text-secondary);
     font-size: 0.9em;
     margin-right: 10px;
-}
-
-/* LaTeX 렌더링 블록은 코드 폰트 적용하지 않음 */
-.editor-block.rendered-latex {
-    font-family: inherit;
-    background-color: var(--code-bg);
-    padding: 15px 10px;
-    text-align: center; /* 수식 중앙 정렬 */
 }
 
 /* 렌더링된 요소들 */
@@ -257,21 +254,15 @@ a:hover {
 }
 
 .link-preview {
-    display: none;
-    padding: 4px 8px;
-    background-color: var(--accent-color);
-    border-radius: 3px;
-    font-size: 0.85em;
-    margin-left: 6px;
-    color: white;
     opacity: 0;
+    pointer-events: none;
     transition: opacity 0.2s;
 }
 
 a:hover + .link-preview,
 .link-preview.show-preview {
-    display: inline-block;
     opacity: 1;
+    pointer-events: auto;
 }
 
 a:hover {
@@ -505,7 +496,7 @@ a:hover {
     margin-right: 8px;
 }
 
-/* 스크롤바 */
+/* 추가 */
 ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -518,6 +509,12 @@ a:hover {
 ::-webkit-scrollbar-thumb {
     background: var(--border-color);
     border-radius: 5px;
+}
+
+/* Firefox 지원 추가 */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) var(--bg-secondary);
 }
 
 ::-webkit-scrollbar-thumb:hover {

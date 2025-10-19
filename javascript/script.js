@@ -137,7 +137,9 @@ function setupEventListeners() {
     document.getElementById('fontSize').addEventListener('change', applySettings);
     document.getElementById('fontFamily').addEventListener('change', applySettings);
     document.getElementById('settingsModal').addEventListener('click', (e) => {
-        if (e.target.id === 'settingsModal') closeSettings();
+        if (e.target === document.getElementById('settingsModal')) {
+            closeSettings();
+        }
     });
 }
 
@@ -151,12 +153,14 @@ function handleInput(e) {
         // 빈 블록 상태 유지 (<br> 태그)
         if (block.textContent === '' && block.childNodes.length === 0) {
             block.innerHTML = '<br>';
-            const sel = window.getSelection();
-            const range = document.createRange();
-            range.setStart(block, 0);
-            range.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(range);
+            setTimeout(() => {
+                const sel = window.getSelection();
+                const range = document.createRange();
+                range.setStart(block, 0);
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }, 0);
         }
     }
 }
@@ -335,6 +339,7 @@ function handlePaste(e) {
     for (let i = 1; i < lines.length; i++) {
         const newBlock = document.createElement('div');
         newBlock.className = 'editor-block';
+        newBlock.setAttribute('data-raw', lines[i]);  // <- 이 줄 추가
         newBlock.textContent = lines[i];
         currentBlock.parentNode.insertBefore(newBlock, lastBlock.nextSibling);
         lastBlock = newBlock;
@@ -396,7 +401,7 @@ function switchToEditMode(block, cursorPos = 'end') {
             range.setStart(block, 0);
         } else {
             const textNode = block.firstChild;
-            if (textNode.nodeType === Node.TEXT_NODE) {
+            if (textNode && textNode.nodeType === Node.TEXT_NODE) {
                 if (cursorPos === 'end') {
                     range.setStart(textNode, textNode.length);
                 } else if (cursorPos === 'start') {
@@ -565,20 +570,9 @@ function renderDocument() {
             const listClass = newListType === 'ol' ? 'num' : 'dot';
 
             let listContainerFound = false;
-            let listBlockIndex = index - 1;
-            
-            // 리스트 이어가기 로직 (오류 2 수정: 이전 블록에서 리스트 컨테이너 탐색)
-            if (inList && listType === newListType) {
-                while (listBlockIndex >= 0) {
-                    const checkBlock = blocks[listBlockIndex];
-                    // display: '' (보이는 블록)이면서 리스트 컨테이너를 포함하는 블록을 찾음
-                    if (checkBlock.style.display !== 'none' && checkBlock.querySelector(newListType)) {
-                            listContainer = checkBlock.querySelector(newListType);
-                            listContainerFound = true;
-                            break;
-                    }
-                    listBlockIndex--;
-                }
+
+            if (inList && listType === newListType && listContainer) {
+                listContainerFound = true;
             }
 
             if (!listContainerFound) {
@@ -725,19 +719,21 @@ function updateTOC() {
     tocContainer.innerHTML = tocHtml;
     
     // 목차 링크 클릭 이벤트 (부드러운 스크롤)
-    tocContainer.querySelectorAll('a').forEach(anchor => {
-        anchor.addEventListener('click', function(e) {
+    tocContainer.removeEventListener('click', tocLinkClickHandler);
+    tocContainer.addEventListener('click', tocLinkClickHandler);
+
+    // 새 함수 추가 (전역 함수로)
+    function tocLinkClickHandler(e) {
+        if (e.target.tagName === 'A') {
             e.preventDefault();
-            e.stopPropagation(); 
-            
-            const targetElement = document.querySelector(this.getAttribute('href'));
+            e.stopPropagation();
+            const targetId = e.target.getAttribute('href').substring(1);
+            const targetElement = document.getElementById(targetId);
             if (targetElement) {
-            targetElement.scrollIntoView({
-                behavior: 'smooth'
-            });
+                targetElement.scrollIntoView({ behavior: 'smooth' });
             }
-        });
-    });
+        }
+    }
 }
 
 // --- 인라인 마크다운 파싱 및 유틸리티 ---
@@ -776,10 +772,17 @@ function parseInlineMarkdown(text) {
     // 오류 2 수정: 각주 파싱 로직 재추가
     text = text.replace(/:::(.+?)\((.+?)\):::/g, (match, content, title) => {
         const safeTitle = title.trim();
-        const safeContent = content.trim(); 
-        // data-content에는 HTML 이스케이프된 raw content가 들어가야 안전합니다.
-        return `<span class="footnote-ref" data-title="${safeTitle}" data-content="${safeContent}">${safeTitle}</span>`;
+        const safeContent = content.trim();
+        // data-content 속성값을 HTML 엔티티로 인코딩
+        const encodedContent = safeContent
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        return `<span class="footnote" data-title="${safeTitle}" data-content="${encodedContent}">${safeTitle}</span>`;
     });
+
     
     // 6. 인라인 서식 (순서 중요)
     text = text.replace(/~~(.+?)~~/g, '<span class="hover-strikethrough">$1</span>'); // 호버 취소선
