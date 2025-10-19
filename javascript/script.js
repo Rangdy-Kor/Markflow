@@ -401,87 +401,168 @@ function handleKeyDown(e) {
         newRange.collapse(true);
         sel.removeAllRanges();
         sel.addRange(newRange);
-    } else if (e.key === 'Backspace') {
+    } else if (e.key === 'Backspace' || e.key === 'Delete') {
+        const textContent = currentBlock.textContent || '';
+        // 빈 블록에서 Backspace/Delete 누를 때 <br> 강제 보호
+        if (textContent === '') {
+            // 블록 맨 앞에서 Backspace로 이전 블록과 병합하는 경우는 예외
+            if (e.key === 'Backspace' && range.startOffset === 0 && currentBlock.previousSibling) {
+                // 병합 로직은 아래에서 처리되므로 여기서는 pass
+            } else {
+                // 그 외의 경우 무조건 막음
+                e.preventDefault();
+                if (!currentBlock.querySelector('br')) {
+                    currentBlock.innerHTML = '<br>';
+                }
+                return;
+            }
+        }
+        
         if (!currentBlock) return;
 
-        // 1. 텍스트가 선택된 경우 (Selection이 있는 경우)
+        // 1. 텍스트가 선택된 경우 (다중 블록 선택 포함)
         if (!range.collapsed) {
             e.preventDefault();
             
-            // 선택 범위의 시작과 끝을 정확히 파악
-            let startNode = range.startContainer;
-            let endNode = range.endContainer;
-            let startOffset = range.startOffset;
-            let endOffset = range.endOffset;
+            const startBlock = getContainingBlock(range.startContainer);
+            const endBlock = getContainingBlock(range.endContainer);
             
-            // 텍스트 노드가 아닌 경우 처리
-            if (startNode.nodeType !== Node.TEXT_NODE) {
-                startNode = currentBlock.firstChild || currentBlock;
-                startOffset = 0;
-            }
-            if (endNode.nodeType !== Node.TEXT_NODE) {
-                endNode = currentBlock.lastChild || currentBlock;
-                if (endNode.nodeType === Node.TEXT_NODE) {
-                    endOffset = endNode.length;
-                } else {
-                    endOffset = currentBlock.textContent.length;
+            // 단일 블록 선택
+            if (startBlock === endBlock) {
+                const fullText = currentBlock.textContent || '';
+                
+                // TreeWalker로 정확한 선택 범위 계산
+                const walker = document.createTreeWalker(
+                    currentBlock,
+                    NodeFilter.SHOW_TEXT,
+                    null,
+                    false
+                );
+                
+                let currentPos = 0;
+                let startPos = -1;
+                let endPos = -1;
+                let node;
+                
+                const startNode = range.startContainer;
+                const endNode = range.endContainer;
+                const startOffset = range.startOffset;
+                const endOffset = range.endOffset;
+                
+                while (node = walker.nextNode()) {
+                    const nodeLength = node.length;
+                    if (node === startNode) {
+                        startPos = currentPos + startOffset;
+                    }
+                    if (node === endNode) {
+                        endPos = currentPos + endOffset;
+                    }
+                    currentPos += nodeLength;
                 }
+                
+                if (startPos === -1) startPos = 0;
+                if (endPos === -1) endPos = fullText.length;
+                
+                const beforeText = fullText.substring(0, startPos);
+                const afterText = fullText.substring(endPos);
+                const mergedText = beforeText + afterText;
+                
+                currentBlock.textContent = mergedText;
+                currentBlock.setAttribute('data-raw', mergedText);
+                
+                if (mergedText === '') {
+                    currentBlock.innerHTML = '<br>';
+                }
+                
+                // 커서 위치 복원
+                setTimeout(() => {
+                    currentBlock.focus();
+                    const sel = window.getSelection();
+                    const newRange = document.createRange();
+                    
+                    if (currentBlock.firstChild && currentBlock.firstChild.nodeType === Node.TEXT_NODE) {
+                        const cursorPos = Math.min(beforeText.length, currentBlock.firstChild.length);
+                        newRange.setStart(currentBlock.firstChild, cursorPos);
+                    } else {
+                        newRange.setStart(currentBlock, 0);
+                    }
+                    
+                    newRange.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(newRange);
+                }, 0);
+                
+                return;
             }
             
-            // 전체 텍스트에서 앞뒤 추출
-            const fullText = currentBlock.textContent || '';
-            let beforeText = '';
-            let afterText = '';
+            // 다중 블록 선택
+            const blocks = Array.from(editor.querySelectorAll('.editor-block'));
+            const startIndex = blocks.indexOf(startBlock);
+            const endIndex = blocks.indexOf(endBlock);
             
-            // contentEditable 환경에서 정확한 위치 계산
-            const walker = document.createTreeWalker(
-                currentBlock,
-                NodeFilter.SHOW_TEXT,
-                null,
-                false
-            );
+            if (startIndex === -1 || endIndex === -1) return;
             
-            let currentPos = 0;
-            let startPos = -1;
-            let endPos = -1;
-            let node;
+            // 시작 블록의 선택 이전 텍스트 추출
+            const startFullText = startBlock.textContent || '';
+            const startWalker = document.createTreeWalker(startBlock, NodeFilter.SHOW_TEXT, null, false);
+            let startCurrentPos = 0;
+            let startCutPos = 0;
+            let startNode;
             
-            while (node = walker.nextNode()) {
-                const nodeLength = node.length;
-                if (node === startNode) {
-                    startPos = currentPos + startOffset;
+            while (startNode = startWalker.nextNode()) {
+                if (startNode === range.startContainer) {
+                    startCutPos = startCurrentPos + range.startOffset;
+                    break;
                 }
-                if (node === endNode) {
-                    endPos = currentPos + endOffset;
-                }
-                currentPos += nodeLength;
+                startCurrentPos += startNode.length;
             }
             
-            if (startPos === -1) startPos = 0;
-            if (endPos === -1) endPos = fullText.length;
+            const beforeText = startFullText.substring(0, startCutPos);
             
-            beforeText = fullText.substring(0, startPos);
-            afterText = fullText.substring(endPos);
+            // 끝 블록의 선택 이후 텍스트 추출
+            const endFullText = endBlock.textContent || '';
+            const endWalker = document.createTreeWalker(endBlock, NodeFilter.SHOW_TEXT, null, false);
+            let endCurrentPos = 0;
+            let endCutPos = endFullText.length;
+            let endNode;
             
+            while (endNode = endWalker.nextNode()) {
+                if (endNode === range.endContainer) {
+                    endCutPos = endCurrentPos + range.endOffset;
+                    break;
+                }
+                endCurrentPos += endNode.length;
+            }
+            
+            const afterText = endFullText.substring(endCutPos);
+            
+            // 중간 블록들 삭제
+            for (let i = startIndex + 1; i <= endIndex; i++) {
+                if (blocks[i]) blocks[i].remove();
+            }
+            
+            // 시작 블록에 병합된 텍스트 설정
             const mergedText = beforeText + afterText;
-            currentBlock.textContent = mergedText;
-            currentBlock.setAttribute('data-raw', mergedText);
+            startBlock.textContent = mergedText;
+            startBlock.setAttribute('data-raw', mergedText);
             
             if (mergedText === '') {
-                currentBlock.innerHTML = '<br>';
+                startBlock.innerHTML = '<br>';
             }
             
-            // 커서를 병합 지점에 설정
+            currentEditingBlock = startBlock;
+            
+            // 커서 위치 복원
             setTimeout(() => {
-                currentBlock.focus();
+                startBlock.focus();
                 const sel = window.getSelection();
                 const newRange = document.createRange();
                 
-                if (currentBlock.firstChild && currentBlock.firstChild.nodeType === Node.TEXT_NODE) {
-                    const cursorPos = Math.min(beforeText.length, currentBlock.firstChild.length);
-                    newRange.setStart(currentBlock.firstChild, cursorPos);
+                if (startBlock.firstChild && startBlock.firstChild.nodeType === Node.TEXT_NODE) {
+                    const cursorPos = Math.min(beforeText.length, startBlock.firstChild.length);
+                    newRange.setStart(startBlock.firstChild, cursorPos);
                 } else {
-                    newRange.setStart(currentBlock, 0);
+                    newRange.setStart(startBlock, 0);
                 }
                 
                 newRange.collapse(true);
@@ -491,57 +572,10 @@ function handleKeyDown(e) {
             
             return;
         }
-
-        // 2. 첫 번째 블록 맨 앞에서 Backspace → 아무것도 안 함
-        if (!currentBlock.previousSibling && range.startOffset === 0) {
-            e.preventDefault();
-            return;
-        }
-
-        // 3. 블록 맨 앞에서 Backspace → 이전 블록과 병합
-        if (range.startOffset === 0 && currentBlock.previousSibling) {
-            e.preventDefault();
-
-            // 이전 블록 찾기 (display: none인 블록 건너뛰기)
-            let prevBlock = currentBlock.previousSibling;
-            while (prevBlock && prevBlock.style.display === 'none') {
-                prevBlock = prevBlock.previousSibling;
-            }
-
-            if (!prevBlock) return;
-
-            const prevRaw = prevBlock.getAttribute('data-raw');
-            const currentRaw = currentBlock.getAttribute('data-raw');
-            
-            const prevText = prevRaw !== null ? prevRaw : prevBlock.textContent || '';
-            const currentText = currentRaw !== null ? currentRaw : currentBlock.textContent || '';
-
-            const mergedText = prevText + currentText;
-            prevBlock.setAttribute('data-raw', mergedText);
-            prevBlock.textContent = mergedText;
-            prevBlock.classList.add('editing');
-            prevBlock.classList.remove('rendered', 'heading-block', 'code-block-marker', 'code-block-content');
-            prevBlock.style.display = '';
-
-            currentBlock.remove();
-            currentEditingBlock = prevBlock;
-
-            prevBlock.focus();
-            const sel = window.getSelection();
-            const newRange = document.createRange();
-            
-            if (prevBlock.firstChild && prevBlock.firstChild.nodeType === Node.TEXT_NODE) {
-                newRange.setStart(prevBlock.firstChild, prevText.length);
-            } else {
-                newRange.setStart(prevBlock, 0);
-            }
-            
-            newRange.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(newRange);
-
-            renderDocument();
-        }
+        
+        // Delete 키는 선택이 없을 때 기본 동작
+        if (e.key === 'Delete') return;
+        
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         // 현재 블록이 첫 줄/마지막 줄일 때만 이동
         const atStart = range.startOffset === 0 && 
