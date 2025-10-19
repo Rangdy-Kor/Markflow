@@ -204,23 +204,23 @@ h2.rendered-heading {
 }
 
 h3.rendered-heading { 
-    font-size: 1.4em;
+    font-size: 1.5em;  /* 1.4em → 1.5em */
     margin-bottom: 14px;
 }
 
 h4.rendered-heading { 
-    font-size: 1.1em;
+    font-size: 1.3em;  /* 1.1em → 1.3em */
     margin-bottom: 12px;
 }
 
 h5.rendered-heading { 
-    font-size: 0.95em;
+    font-size: 1.1em;  /* 0.95em → 1.1em */
     margin-bottom: 10px;
 }
 
 h6.rendered-heading { 
-    font-size: 0.85em; 
-    color: var(--text-secondary);
+    font-size: 1.0em;  /* 0.85em → 1.0em */
+    color: var(--text-primary);  /* text-secondary → text-primary */
     margin-bottom: 10px;
 }
 
@@ -366,6 +366,9 @@ a:hover {
     margin: 10px 0;
     color: var(--text-secondary);
     font-style: italic;
+    background-color:var(--bg-secondary); 
+    padding:8px
+     12px; border-radius:4px;
 }
 
 /* 수평선 스타일 */

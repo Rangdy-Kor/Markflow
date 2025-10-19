@@ -71,10 +71,13 @@ function setupEventListeners() {
     editor.addEventListener('blur', (e) => {
         setTimeout(() => {
             if (!editor.contains(document.activeElement)) {
-                if (currentEditingBlock) {
-                    currentEditingBlock.setAttribute('data-raw', currentEditingBlock.textContent || '');
-                    currentEditingBlock.classList.remove('editing'); 
-                }
+                // 모든 editing 블록의 data-raw 업데이트
+                const editingBlocks = editor.querySelectorAll('.editor-block.editing');
+                editingBlocks.forEach(block => {
+                    block.setAttribute('data-raw', block.textContent || '');
+                    block.classList.remove('editing');
+                });
+                currentEditingBlock = null;
                 renderDocument();
             }
         }, 100);
@@ -149,6 +152,9 @@ function handleInput(e) {
     if (block) {
         block.classList.add('editing');
         currentEditingBlock = block;
+        
+        // data-raw 속성 실시간 업데이트 (핵심!)
+        block.setAttribute('data-raw', block.textContent || '');
 
         // 빈 블록 상태 유지 (<br> 태그)
         if (block.textContent === '' && block.childNodes.length === 0) {
@@ -174,13 +180,134 @@ function handleClick(e) {
             e.stopPropagation();
             return;
         }
-        // 그 외 링크는 기본 동작 허용
         return;
     }
 
     if (block && !block.classList.contains('editing')) {
-        switchToEditMode(block);
+        // 코드 블록이나 인용문 블록의 일부인지 확인
+        const multilineBlock = findMultilineBlock(block);
+        if (multilineBlock) {
+            switchToEditModeMultiline(multilineBlock);
+        } else {
+            switchToEditMode(block);
+        }
     }
+}
+
+// handleClick 함수 다음에 추가
+function findMultilineBlock(clickedBlock) {
+    const blocks = Array.from(editor.querySelectorAll('.editor-block'));
+    const clickedIndex = blocks.indexOf(clickedBlock);
+    
+    if (clickedIndex === -1) return null;
+    
+    // 코드 블록 확인
+    if (clickedBlock.classList.contains('code-block-marker') || 
+        clickedBlock.classList.contains('code-block-content')) {
+        
+        let startIndex = clickedIndex;
+        let endIndex = clickedIndex;
+        
+        // 시작점 찾기
+        for (let i = clickedIndex; i >= 0; i--) {
+            const raw = blocks[i].getAttribute('data-raw') || '';
+            if (raw.trim().match(/^\$\$SCRIPT\$\$\s*>\s*"(.*?)"\s*>\s*```$/)) {
+                startIndex = i;
+                break;
+            }
+            if (i < clickedIndex && !blocks[i].classList.contains('code-block-marker') && 
+                !blocks[i].classList.contains('code-block-content')) {
+                break;
+            }
+        }
+        
+        // 끝점 찾기
+        for (let i = startIndex; i < blocks.length; i++) {
+            const raw = blocks[i].getAttribute('data-raw') || '';
+            if (i > startIndex && raw.trim() === '```') {
+                endIndex = i;
+                break;
+            }
+        }
+        
+        return { blocks: blocks.slice(startIndex, endIndex + 1), type: 'code' };
+    }
+    
+    // 인용문 블록 확인
+    if (clickedBlock.classList.contains('blockquote-content')) {
+        let startIndex = clickedIndex;
+        let endIndex = clickedIndex;
+        
+        // 시작점 찾기
+        for (let i = clickedIndex; i >= 0; i--) {
+            const raw = blocks[i].getAttribute('data-raw') || '';
+            if (raw.trim() === '"""') {
+                startIndex = i;
+                break;
+            }
+        }
+        
+        // 끝점 찾기
+        for (let i = clickedIndex; i < blocks.length; i++) {
+            const raw = blocks[i].getAttribute('data-raw') || '';
+            if (i > startIndex && raw.trim() === '"""') {
+                endIndex = i;
+                break;
+            }
+        }
+        
+        return { blocks: blocks.slice(startIndex, endIndex + 1), type: 'quote' };
+    }
+    
+    return null;
+}
+
+// findMultilineBlock 함수 다음에 추가
+function switchToEditModeMultiline(multilineBlock) {
+    if (!multilineBlock) return;
+    
+    if (currentEditingBlock) {
+        currentEditingBlock.setAttribute('data-raw', currentEditingBlock.textContent || '');
+        currentEditingBlock.classList.remove('editing');
+        renderDocument();
+    }
+    
+    const { blocks, type } = multilineBlock;
+    
+    // 모든 블록의 원본 텍스트 복원
+    blocks.forEach((block, index) => {
+        block.classList.add('editing');
+        block.classList.remove('rendered', 'heading-block', 'code-block-marker', 
+            'code-block-content', 'code-block-start', 'code-block-end', 
+            'blockquote-content', 'rendered-latex');
+        block.style.display = '';
+        
+        const rawText = block.getAttribute('data-raw') || '';
+        block.textContent = rawText;
+        
+        if (rawText === '') {
+            block.innerHTML = '<br>';
+        }
+    });
+    
+    // 첫 번째 블록에 포커스
+    currentEditingBlock = blocks[0];
+    blocks[0].focus();
+    
+    setTimeout(() => {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        
+        if (blocks[0].firstChild && blocks[0].firstChild.nodeType === Node.TEXT_NODE) {
+            range.setStart(blocks[0].firstChild, 0);
+        } else {
+            range.setStart(blocks[0], 0);
+        }
+        
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }, 0);
 }
 
 function handleKeyDown(e) {
@@ -246,13 +373,16 @@ function handleKeyDown(e) {
         }
 
         currentBlock.parentNode.insertBefore(newBlock, currentBlock.nextSibling);
+        
+        // 이전 블록 렌더링 (추가!)
+        currentBlock.classList.remove('editing');
         currentEditingBlock = newBlock;
-
-        // 커서를 새 블록으로 이동 (핵심!)
-        // contentEditable 상태에서 focus() 후 바로 Range 설정
+        renderDocument();
+        
+        // 새 블록을 editing 상태로 복원
+        newBlock.classList.add('editing');
         newBlock.focus();
         
-        // 직접 Range 설정 (setTimeout 제거)
         const sel = window.getSelection();
         const newRange = document.createRange();
         
@@ -362,9 +492,43 @@ function handleKeyDown(e) {
 
             renderDocument();
         }
-    }else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-            // ... 기존 화살표 코드 ...
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        // 현재 블록이 첫 줄/마지막 줄일 때만 이동
+        const atStart = range.startOffset === 0 && 
+                    range.startContainer === currentBlock.firstChild;
+        const atEnd = range.endOffset === currentBlock.textContent.length;
+        
+        if ((e.key === 'ArrowUp' && atStart) || (e.key === 'ArrowDown' && atEnd)) {
+            e.preventDefault();
+            
+            // 현재 블록 저장 및 렌더링
+            if (currentBlock) {
+                currentBlock.setAttribute('data-raw', currentBlock.textContent || '');
+                currentBlock.classList.remove('editing');
+            }
+            
+            renderDocument();
+            
+            // 이동할 블록 찾기
+            const blocks = Array.from(editor.querySelectorAll('.editor-block'));
+            const currentIndex = blocks.indexOf(currentBlock);
+            let targetBlock = null;
+            
+            if (e.key === 'ArrowUp' && currentIndex > 0) {
+                targetBlock = blocks[currentIndex - 1];
+            } else if (e.key === 'ArrowDown' && currentIndex < blocks.length - 1) {
+                targetBlock = blocks[currentIndex + 1];
+            }
+            
+            if (targetBlock) {
+                switchToEditMode(targetBlock, e.key === 'ArrowUp' ? 'end' : 'start');
+            } else {
+                // 이동 불가능하면 현재 블록 다시 편집 모드로
+                currentBlock.classList.add('editing');
+                currentEditingBlock = currentBlock;
+            }
         }
+    }
 }
 
 // 붙여넣기 로직 (변경 없음)
@@ -487,13 +651,15 @@ function switchToEditMode(block, cursorPos = 'end') {
 function renderDocument() {
     const blocks = Array.from(editor.querySelectorAll('.editor-block'));
     
+    // 개요 번호 카운터 초기화 (##, ###, #### 등 # 여러개 형식용)
+    let multiHashCounters = [0, 0, 0, 0, 0, 0]; // h1~h6
+    
     let inCodeBlock = false;
     let codeLanguage = '';
     let codeStartIndex = -1;
     let inQuoteBlock = false;
     let inList = false;
     let listType = null;
-    let listContainer = null;
     
     // 1. 블록 순회 및 렌더링
     blocks.forEach((block, index) => {
@@ -596,30 +762,47 @@ function renderDocument() {
             return;
         }
 
-        // --- 헤딩 (오류 4 수정: 숫자 없는 개요에 자동 카운팅 제거) ---
-        const headingMatch = trimmed.match(/^(#{1,6})\s*(.*)$/);
-        if (headingMatch) {
-            const levelMark = headingMatch[1];
-            let fullContent = headingMatch[2];
-            const level = levelMark.length;
-            let levelString = '';
-            let displayContent = '';
+        // --- 헤딩 ---
+        // #숫자 형식 (예: #1, #2, #3)
+        const singleHashNumMatch = trimmed.match(/^#(\d+)\s+(.*)$/);
+        if (singleHashNumMatch) {
+            const num = parseInt(singleHashNumMatch[1]);
+            const displayContent = singleHashNumMatch[2];
             
-            const numMatch = fullContent.match(/^(\d+\.(?:\d+\.)*|\d+)\s+(.*)$/);
+            // #1~#6까지 크기 다르게 (번호 없이)
+            let level = Math.min(num, 6);
+            block.innerHTML = `<h${level} class="rendered-heading" data-level-string="">${parseInlineMarkdown(displayContent)}</h${level}>`;
+            block.classList.add('rendered', 'heading-block');
+            inList = false;
+            inQuoteBlock = false;
+            return;
+        }
 
-            if (numMatch) {
-                const explicitNumber = numMatch[1];
-                displayContent = numMatch[2];
-                levelString = explicitNumber.endsWith('.') ? explicitNumber : explicitNumber + '.';
-                
-                // 번호 + 제목 모두 표시
-                block.innerHTML = `<h${level} class="rendered-heading" data-level-string="${escapeHtml(levelString)}"><span class="heading-number">${escapeHtml(levelString)}</span> ${parseInlineMarkdown(displayContent)}</h${level}>`;
-            } else {
-                levelString = '';
-                displayContent = fullContent;
-                block.innerHTML = `<h${level} class="rendered-heading" data-level-string="">${parseInlineMarkdown(displayContent)}</h${level}>`;
+        // # 여러개 형식 (예: ##, ###, ####)
+        const multiHashMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+        if (multiHashMatch) {
+            const levelMark = multiHashMatch[1];
+            let displayContent = multiHashMatch[2];
+            const level = levelMark.length;
+            
+            // 현재 레벨 증가
+            multiHashCounters[level - 1]++;
+            
+            // 하위 레벨 초기화
+            for (let i = level; i < 6; i++) {
+                multiHashCounters[i] = 0;
             }
             
+            // 번호 문자열 생성 (1, 1.1, 1.1.1 형식)
+            let levelString = '';
+            for (let i = 0; i < level; i++) {
+                if (multiHashCounters[i] > 0) {
+                    levelString += (levelString ? '.' : '') + multiHashCounters[i];
+                }
+            }
+            levelString += '.';
+            
+            block.innerHTML = `<h${level} class="rendered-heading" data-level-string="${escapeHtml(levelString)}"><span class="heading-number">${escapeHtml(levelString)}</span> ${parseInlineMarkdown(displayContent)}</h${level}>`;
             block.classList.add('rendered', 'heading-block');
             inList = false;
             inQuoteBlock = false;
@@ -757,7 +940,6 @@ function updateTOC() {
     // $$TOC$$ 블록 찾기
     const tocBlock = Array.from(editor.querySelectorAll('.editor-block')).find(b => {
         const raw = b.getAttribute('data-raw')?.trim();
-        // $$TOC$$또는$$TOC$$ > "목차 제목" 모두 허용
         return raw === '$$TOC$$' || raw?.match(/^\$\$TOC\$\$\s*>\s*"(.*?)"$/);
     });
     const headingBlocks = Array.from(editor.querySelectorAll('.rendered-heading'));
@@ -776,6 +958,9 @@ function updateTOC() {
         return;
     }
 
+    // 목차용 카운터 초기화 (중요!)
+    let tocMultiHashCounters = [0, 0, 0, 0, 0, 0];
+
     let tocHtml = `<h2>${escapeHtml(tocTitle)}</h2><ul>`;
     headingBlocks.forEach((h, index) => {
         const id = `heading-${index}`;
@@ -783,14 +968,33 @@ function updateTOC() {
         const level = parseInt(h.tagName.substring(1));
         
         let levelString = h.getAttribute('data-level-string') || '';
-        
-        // 오류 3 수정: h.textContent에서 levelString을 제거하고 정확한 텍스트 추출
         let headingText = h.textContent.startsWith(levelString) 
                             ? h.textContent.substring(levelString.length).trim() 
-                            : h.textContent.trim(); 
+                            : h.textContent.trim();
         
-        // levelString이 비어있지 않다면, 텍스트에 공백을 추가하여 합칩니다.
-        const tocLinkText = levelString ? `${levelString} ${headingText}` : headingText;
+        // #1, #2 형식은 번호 없이, ##, ### 형식은 새로 카운팅
+        let tocLinkText = '';
+        
+        if (levelString) {
+            // ## 형식: 목차에서도 번호 재생성
+            tocMultiHashCounters[level - 1]++;
+            for (let i = level; i < 6; i++) {
+                tocMultiHashCounters[i] = 0;
+            }
+            
+            let tocLevelString = '';
+            for (let i = 0; i < level; i++) {
+                if (tocMultiHashCounters[i] > 0) {
+                    tocLevelString += (tocLevelString ? '.' : '') + tocMultiHashCounters[i];
+                }
+            }
+            tocLevelString += '.';
+            
+            tocLinkText = `${tocLevelString} ${headingText}`;
+        } else {
+            // #1 형식: 번호 없이
+            tocLinkText = headingText;
+        }
 
         tocHtml += `<li class="toc-level-${level}"><a href="#${id}">${tocLinkText}</a></li>`;
     });
@@ -798,20 +1002,19 @@ function updateTOC() {
     
     tocContainer.innerHTML = tocHtml;
     
-    // 목차 링크 클릭 이벤트 (부드러운 스크롤)
+    // 목차 링크 클릭 이벤트
     tocContainer.removeEventListener('click', tocLinkClickHandler);
     tocContainer.addEventListener('click', tocLinkClickHandler);
+}
 
-    // 새 함수 추가 (전역 함수로)
-    function tocLinkClickHandler(e) {
-        if (e.target.tagName === 'A') {
-            e.preventDefault();
-            e.stopPropagation();
-            const targetId = e.target.getAttribute('href').substring(1);
-            const targetElement = document.getElementById(targetId);
-            if (targetElement) {
-                targetElement.scrollIntoView({ behavior: 'smooth' });
-            }
+function tocLinkClickHandler(e) {
+    if (e.target.tagName === 'A') {
+        e.preventDefault();
+        e.stopPropagation();
+        const targetId = e.target.getAttribute('href').substring(1);
+        const targetElement = document.getElementById(targetId);
+        if (targetElement) {
+            targetElement.scrollIntoView({ behavior: 'smooth' });
         }
     }
 }
