@@ -208,6 +208,7 @@ function handleKeyDown(e) {
         const beforeText = fullText.substring(0, cursorPos);
         const afterText = fullText.substring(cursorPos);
 
+        // 현재 블록 업데이트
         currentBlock.textContent = beforeText;
         currentBlock.setAttribute('data-raw', beforeText);
         if (beforeText === '') {
@@ -247,35 +248,123 @@ function handleKeyDown(e) {
         currentBlock.parentNode.insertBefore(newBlock, currentBlock.nextSibling);
         currentEditingBlock = newBlock;
 
-        // 커서를 새 블록 맨 앞으로 설정 (중요!)
-        setTimeout(() => {
-            newBlock.focus();
+        // 커서를 새 블록으로 이동 (핵심!)
+        // contentEditable 상태에서 focus() 후 바로 Range 설정
+        newBlock.focus();
+        
+        // 직접 Range 설정 (setTimeout 제거)
+        const sel = window.getSelection();
+        const newRange = document.createRange();
+        
+        if (newBlock.firstChild && newBlock.firstChild.nodeType === Node.TEXT_NODE) {
+            newRange.setStart(newBlock.firstChild, 0);
+        } else {
+            newRange.setStart(newBlock, 0);
+        }
+        
+        newRange.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+    } else if (e.key === 'Backspace') {
+        if (!currentBlock) return;
+
+        // 1. 텍스트가 선택된 경우 (Selection이 있는 경우)
+        if (!range.collapsed) {
+            // 선택된 텍스트를 지우도록 기본 동작 허용
+            e.preventDefault();
+            
+            // 선택 범위 앞뒤 텍스트
+            const tempBefore = range.cloneRange();
+            tempBefore.setStart(currentBlock, 0);
+            tempBefore.setEnd(range.startContainer, range.startOffset);
+            const beforeText = tempBefore.toString();
+            
+            const tempAfter = range.cloneRange();
+            tempAfter.setStart(range.endContainer, range.endOffset);
+            tempAfter.setEnd(currentBlock, currentBlock.childNodes.length);
+            const afterText = tempAfter.toString();
+            
+            const mergedText = beforeText + afterText;
+            currentBlock.textContent = mergedText;
+            currentBlock.setAttribute('data-raw', mergedText);
+            
+            if (mergedText === '') {
+                currentBlock.innerHTML = '<br>';
+            }
+            
+            // 커서를 병합 지점에 설정
+            setTimeout(() => {
+                currentBlock.focus();
+                const sel = window.getSelection();
+                const newRange = document.createRange();
+                
+                if (currentBlock.firstChild && currentBlock.firstChild.nodeType === Node.TEXT_NODE) {
+                    newRange.setStart(currentBlock.firstChild, beforeText.length);
+                } else {
+                    newRange.setStart(currentBlock, 0);
+                }
+                
+                newRange.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(newRange);
+            }, 0);
+            
+            return;
+        }
+
+        // 2. 첫 번째 블록 맨 앞에서 Backspace → 아무것도 안 함
+        if (!currentBlock.previousSibling && range.startOffset === 0) {
+            e.preventDefault();
+            return;
+        }
+
+        // 3. 블록 맨 앞에서 Backspace → 이전 블록과 병합
+        if (range.startOffset === 0 && currentBlock.previousSibling) {
+            e.preventDefault();
+
+            // 이전 블록 찾기 (display: none인 블록 건너뛰기)
+            let prevBlock = currentBlock.previousSibling;
+            while (prevBlock && prevBlock.style.display === 'none') {
+                prevBlock = prevBlock.previousSibling;
+            }
+
+            if (!prevBlock) return;
+
+            const prevRaw = prevBlock.getAttribute('data-raw');
+            const currentRaw = currentBlock.getAttribute('data-raw');
+            
+            const prevText = prevRaw !== null ? prevRaw : prevBlock.textContent || '';
+            const currentText = currentRaw !== null ? currentRaw : currentBlock.textContent || '';
+
+            const mergedText = prevText + currentText;
+            prevBlock.setAttribute('data-raw', mergedText);
+            prevBlock.textContent = mergedText;
+            prevBlock.classList.add('editing');
+            prevBlock.classList.remove('rendered', 'heading-block', 'code-block-marker', 'code-block-content');
+            prevBlock.style.display = '';
+
+            currentBlock.remove();
+            currentEditingBlock = prevBlock;
+
+            prevBlock.focus();
             const sel = window.getSelection();
             const newRange = document.createRange();
             
-            if (newBlock.childNodes.length === 0) {
-                newRange.setStart(newBlock, 0);
+            if (prevBlock.firstChild && prevBlock.firstChild.nodeType === Node.TEXT_NODE) {
+                newRange.setStart(prevBlock.firstChild, prevText.length);
             } else {
-                const firstChild = newBlock.firstChild;
-                if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
-                    newRange.setStart(firstChild, 0);
-                } else {
-                    newRange.setStart(newBlock, 0);
-                }
+                newRange.setStart(prevBlock, 0);
             }
             
             newRange.collapse(true);
             sel.removeAllRanges();
             sel.addRange(newRange);
-            
-            // 강제 렌더링을 피하기 위해 여기서는 renderDocument() 호출하지 않음
-        }, 20);
 
-    } else if (e.key === 'Backspace') {
-        // ... 기존 Backspace 코드 ...
-    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-        // ... 기존 화살표 코드 ...
-    }
+            renderDocument();
+        }
+    }else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            // ... 기존 화살표 코드 ...
+        }
 }
 
 // 붙여넣기 로직 (변경 없음)
@@ -476,14 +565,15 @@ function renderDocument() {
         }
 
         // --- 코드 블록 시작 ---
-        const codeStartMatch = trimmed.match(/^\$\$\$SCRIPT\$\s*>\s*"(.*?)"\s*>\s*```$/);
+        const codeStartMatch = trimmed.match(/^\$\$SCRIPT\$\$\s*>\s*"(.*?)"\s*>\s*```$/);
         if (codeStartMatch) {
             inCodeBlock = true;
             codeLanguage = codeStartMatch[1];
             codeStartIndex = index;
             block.classList.add('code-block-marker');
             block.innerHTML = `<span class="code-language">!(${escapeHtml(codeLanguage)})</span>`;
-            block.textContent = '';  // 마커 텍스트 표시 안 함
+            block.textContent = '';
+            block.style.display = 'none'; // 마커 라인 숨기기
             inList = false;
             inQuoteBlock = false;
             return;
@@ -615,7 +705,7 @@ if (inList) {
         const rawText = block.getAttribute('data-raw') || block.textContent || '';
         const trimmed = rawText.trim();
 
-        if (trimmed.match(/^\$\$SCRIPT\$\s*>\s*"(.*?)"\s*>\s*```$/)) {
+        if (trimmed.match(/^\$\$SCRIPT\$\$\s*>\s*"(.*?)"\s*>\s*```$/)) {
             tempInCodeBlock = true;
             block.classList.add('code-block-start');
         } else if (tempInCodeBlock && index > 0 && blocks[index-1].classList.contains('code-block-content') && trimmed === '```') {
