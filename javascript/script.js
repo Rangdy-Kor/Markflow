@@ -403,19 +403,75 @@ function handleKeyDown(e) {
         sel.addRange(newRange);
     } else if (e.key === 'Backspace' || e.key === 'Delete') {
         const textContent = currentBlock.textContent || '';
-        // 빈 블록에서 Backspace/Delete 누를 때 <br> 강제 보호
-        if (textContent === '') {
-            // 블록 맨 앞에서 Backspace로 이전 블록과 병합하는 경우는 예외
-            if (e.key === 'Backspace' && range.startOffset === 0 && currentBlock.previousSibling) {
-                // 병합 로직은 아래에서 처리되므로 여기서는 pass
-            } else {
-                // 그 외의 경우 무조건 막음
+        
+        // Backspace: 블록 맨 앞에서 이전 블록과 병합
+        if (e.key === 'Backspace' && range.startOffset === 0 && range.collapsed) {
+            const prevBlock = currentBlock.previousElementSibling;
+            if (prevBlock && prevBlock.classList.contains('editor-block')) {
                 e.preventDefault();
-                if (!currentBlock.querySelector('br')) {
-                    currentBlock.innerHTML = '<br>';
+                
+                // 이전 블록의 텍스트 길이 저장 (커서 위치 계산용)
+                const prevText = prevBlock.getAttribute('data-raw') || '';
+                const cursorPosition = prevText.length;
+                const currentText = currentBlock.getAttribute('data-raw') || '';
+                
+                // 이전 블록을 편집 모드로 전환
+                if (currentEditingBlock && currentEditingBlock !== prevBlock) {
+                    currentEditingBlock.setAttribute('data-raw', currentEditingBlock.textContent || '');
+                    currentEditingBlock.classList.remove('editing');
+                    renderDocument();
                 }
+                
+                prevBlock.classList.add('editing');
+                prevBlock.classList.remove('rendered', 'heading-block', 'code-block-marker', 
+                    'code-block-content', 'code-block-start', 'code-block-end', 
+                    'blockquote-content', 'rendered-latex');
+                prevBlock.style.display = '';
+                
+                // 두 블록의 텍스트 병합
+                const mergedText = prevText + currentText;
+                prevBlock.textContent = mergedText;
+                prevBlock.setAttribute('data-raw', mergedText);
+                
+                if (mergedText === '') {
+                    prevBlock.innerHTML = '<br>';
+                }
+                
+                // 현재 블록 삭제
+                currentBlock.remove();
+                
+                // 이전 블록을 현재 편집 블록으로 설정
+                currentEditingBlock = prevBlock;
+                prevBlock.focus();
+                
+                // 커서를 병합 지점에 위치
+                setTimeout(() => {
+                    const sel = window.getSelection();
+                    const newRange = document.createRange();
+                    
+                    if (prevBlock.firstChild && prevBlock.firstChild.nodeType === Node.TEXT_NODE) {
+                        const pos = Math.min(cursorPosition, prevBlock.firstChild.length);
+                        newRange.setStart(prevBlock.firstChild, pos);
+                    } else {
+                        newRange.setStart(prevBlock, 0);
+                    }
+                    
+                    newRange.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(newRange);
+                }, 0);
+                
                 return;
             }
+        }
+        
+        // 빈 블록에서 Backspace/Delete 누를 때 <br> 강제 보호
+        if (textContent === '') {
+            e.preventDefault();
+            if (!currentBlock.querySelector('br')) {
+                currentBlock.innerHTML = '<br>';
+            }
+            return;
         }
         
         if (!currentBlock) return;
